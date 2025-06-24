@@ -1,0 +1,17 @@
+scikit-learn
+numpy
+pandas
+matplotlib
+seaborn
+tqdm
+einops
+wandb
+scipy
+wfdb
+PyWavelets
+openpyxl
+shap
+streamlit
+pyqt5
+omegaconf
+hydra-core

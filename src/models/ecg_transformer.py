@@ -15,11 +15,14 @@ class AttentionPooling(nn.Module):
     def __init__(self, d_model: int):
         super().__init__()
         self.attn = nn.Linear(d_model, 1)
-    def forward(self, x):
+    def forward(self, x, return_attention=False):
         # x: (B, T, C)
         w = self.attn(x)  # (B, T, 1)
         w = torch.softmax(w, dim=1)
-        return (x * w).sum(dim=1)
+        pooled = (x * w).sum(dim=1)
+        if return_attention:
+            return pooled, w.squeeze(-1)  # (B, d_model), (B, T)
+        return pooled
 
 class ECGTransformer(nn.Module): #Pure Transformer for multi-channel ECG (without CNN/RNN) 
     def __init__(self,
@@ -52,9 +55,9 @@ class ECGTransformer(nn.Module): #Pure Transformer for multi-channel ECG (withou
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.pooling = pooling
         if pooling == 'mean':
-            self.pool = lambda x: x.mean(dim=1)
+            self.pool = lambda x, return_attention=False: (x.mean(dim=1), None)
         elif pooling == 'max':
-            self.pool = lambda x: x.max(dim=1)[0]
+            self.pool = lambda x, return_attention=False: (x.max(dim=1)[0], None)
         elif pooling == 'attn':
             self.pool = AttentionPooling(d_model)
         else:
@@ -62,15 +65,20 @@ class ECGTransformer(nn.Module): #Pure Transformer for multi-channel ECG (withou
         self.meta_proj = nn.Linear(meta_dim, d_model)
         self.classifier = nn.Linear(d_model * 2, num_classes)
 
-    def forward(self, x, meta): # x: (B, C, T) -> (B, T, C)
+    def forward(self, x, meta, return_attention=False):
         x = x.transpose(1,2)
         x = self.input_proj(x)
         x = self.pos_enc(x)
         x = self.encoder(x)
-        x = self.pool(x)  # (B, d_model)
-        meta_emb = self.meta_proj(meta)  # (B, d_model)
-        x_cat = torch.cat([x, meta_emb], dim=1)  # (B, d_model*2)
+        if self.pooling == 'attn':
+            x_pooled, attn_weights = self.pool(x, return_attention=return_attention)
+        else:
+            x_pooled, attn_weights = self.pool(x, return_attention=return_attention)
+        meta_emb = self.meta_proj(meta)
+        x_cat = torch.cat([x_pooled, meta_emb], dim=1)
         out = self.classifier(x_cat)
+        if return_attention:
+            return out, attn_weights
         return out
 
 # Example usage

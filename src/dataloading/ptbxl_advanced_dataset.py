@@ -93,36 +93,45 @@ class PTBXLAdvancedDataset(Dataset): #Advanced dataset for PTB-XL, including met
         return np.array([age_norm, sex_bin] + axis_onehot, dtype=np.float32)
 
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        if self.cache_mode:
-            sig_path = row['signal_path']
-            if not os.path.isabs(sig_path):
-                sig_path = os.path.join(self.project_root, sig_path)
-            sig = np.load(sig_path).astype(np.float32)
-            y = np.array(eval(row['labels']), dtype=np.float32)
-            meta = self._process_meta(row)
-            return sig, y, meta
-        else:
-            if self.signal_format == 'highres':
-                rec_name = row['filename_hr'].split('/')[-1].replace('.dat', '')
-            elif self.signal_format == 'lowres':
-                rec_name = row['filename_lr'].split('/')[-1].replace('.dat', '')
-            elif self.signal_format == 'median' and 'median_filename' in row:
-                rec_name = row['median_filename'].split('/')[-1].replace('.dat', '')
+        try:
+            row = self.df.iloc[idx]
+            if self.cache_mode:
+                sig_path = row['signal_path']
+                if not os.path.isabs(sig_path):
+                    sig_path = os.path.join(self.project_root, sig_path)
+                sig_path = os.path.normpath(sig_path).replace('\\', '/')
+                sig = np.load(sig_path).astype(np.float32)
+                y = np.array(eval(row['labels']), dtype=np.float32)
+                meta = self._process_meta(row)
+                return sig, y, meta
             else:
-                raise ValueError('Unknown signal format or no median_filename')
-            rec_path = os.path.join(self.records_dir, rec_name)
-            record = wfdb.rdrecord(rec_path)
-            sig = record.p_signal.T  # (n_leads, siglen)
-            sig = self._fix_length(sig)
-            meta = self._process_meta(row)
-            y = np.zeros(len(self.class_list), dtype=np.float32)
-            for label in row['scp_codes'].keys():
-                if label in self.class_to_idx:
-                    y[self.class_to_idx[label]] = 1.0
-            if self.transform:
-                sig = self.transform(sig, meta=meta)
-            return sig, y, meta
+                if self.signal_format == 'highres':
+                    rec_name = row['filename_hr'].split('/')[-1].replace('.dat', '')
+                elif self.signal_format == 'lowres':
+                    rec_name = row['filename_lr'].split('/')[-1].replace('.dat', '')
+                elif self.signal_format == 'median' and 'median_filename' in row:
+                    rec_name = row['median_filename'].split('/')[-1].replace('.dat', '')
+                else:
+                    raise ValueError('Unknown signal format or no median_filename')
+                rec_path = os.path.join(self.records_dir, rec_name)
+                rec_path = os.path.normpath(rec_path).replace('\\', '/')
+                record = wfdb.rdrecord(rec_path)
+                sig = record.p_signal.T  # (n_leads, siglen)
+                sig = self._fix_length(sig)
+                meta = self._process_meta(row)
+                y = np.zeros(len(self.class_list), dtype=np.float32)
+                for label in row['scp_codes'].keys():
+                    if label in self.class_to_idx:
+                        y[self.class_to_idx[label]] = 1.0
+                if self.transform:
+                    sig = self.transform(sig, meta=meta)
+                return sig, y, meta
+        except FileNotFoundError:
+            if self.cache_mode:
+                print(f'[FileNotFoundError] idx={idx}, path={sig_path}')
+            else:
+                print(f'[FileNotFoundError] idx={idx}, path={rec_path}')
+            return None
 
     def _fix_length(self, sig):
         # Truncation/padding to self.max_len
